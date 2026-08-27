@@ -5,3 +5,5 @@ pydantic
 pillow
 numpy
 opencv-python
+runpod
+requests
