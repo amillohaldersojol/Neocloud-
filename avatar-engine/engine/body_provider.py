@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import json
 import os
+from dotenv import load_dotenv
+load_dotenv(dotenv_path="../.env.local")
 import time
 import uuid
 
