@@ -117,8 +117,7 @@ RUN git clone \
 
 RUN mkdir -p ./pretrained_weights/audio_processor \
     && wget -O ./pretrained_weights/audio_processor/tiny.pt \
-    https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ec22b9/tiny.pt
-
+    https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt
 # ============================================================
 # Verify critical files
 # ============================================================
