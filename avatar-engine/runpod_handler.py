@@ -457,7 +457,7 @@ def run_echomimic(
         "cuda",
 
         "--ref_images_dir",
-        str(ref_dir),
+        str(work_dir),
 
         "--audio_dir",
         str(audio_dir),
