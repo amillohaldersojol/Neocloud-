@@ -4,7 +4,7 @@ NeoCloud NEO v2 - Physical Body Provider
 Purpose:
 - Connect NEO Body Adapter to a real body-generation backend.
 - Keep NEO v1 SadTalker pipeline untouched.
-- Support future local GPU / cloud GPU / external worker.
+- Support local GPU / RunPod GPU / external worker.
 """
 
 from __future__ import annotations
@@ -14,10 +14,22 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import json
 import os
-from dotenv import load_dotenv
-load_dotenv(dotenv_path="../.env.local")
 import time
 import uuid
+import urllib.error
+import urllib.request
+
+from dotenv import load_dotenv
+
+
+# ============================================================
+# Environment
+# ============================================================
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+load_dotenv(BASE_DIR / ".env.local")
+load_dotenv()
 
 
 # ============================================================
@@ -27,14 +39,13 @@ import uuid
 @dataclass
 class BodyProviderConfig:
     provider: str = "disabled"
-    model_name: str = "NEO-Body"
+
+    model_name: str = "NEO-EchoMimicV2"
     model_version: str = "v2"
 
-    # Future cloud/GPU worker
     endpoint: Optional[str] = None
     api_key: Optional[str] = None
 
-    # Local worker/model folder
     local_model_path: Optional[str] = None
 
     timeout_seconds: int = 1800
@@ -65,23 +76,6 @@ class PhysicalBodyJob:
 # ============================================================
 
 class NEOBodyProvider:
-    """
-    Provider layer for physical body generation.
-
-    Current supported provider modes:
-
-    disabled
-        No physical body model is connected.
-
-    local
-        Reserved for a future local GPU body renderer.
-
-    remote
-        Reserved for a cloud/GPU worker.
-
-    This architecture lets NEO use the same API regardless
-    of where the actual body-generation model runs.
-    """
 
     SUPPORTED_PROVIDERS = {
         "disabled",
@@ -98,15 +92,25 @@ class NEOBodyProvider:
             provider=os.getenv(
                 "NEO_BODY_PROVIDER",
                 "disabled",
-            ),
+            ).strip().lower(),
+
             endpoint=os.getenv(
                 "NEO_BODY_ENDPOINT"
             ),
+
             api_key=os.getenv(
                 "NEO_BODY_API_KEY"
             ),
+
             local_model_path=os.getenv(
                 "NEO_BODY_LOCAL_MODEL"
+            ),
+
+            timeout_seconds=int(
+                os.getenv(
+                    "NEO_BODY_TIMEOUT",
+                    "1800",
+                )
             ),
         )
 
@@ -138,14 +142,10 @@ class NEOBodyProvider:
         physical_connected = False
 
         if provider == "local":
-            physical_connected = (
-                local_path_exists
-            )
+            physical_connected = local_path_exists
 
         elif provider == "remote":
-            physical_connected = (
-                remote_configured
-            )
+            physical_connected = remote_configured
 
         return {
             "success": True,
@@ -179,7 +179,7 @@ class NEOBodyProvider:
             "ready": True,
 
             "message": (
-                "NEO Body Provider layer is ready."
+                "NEO Body Provider is connected."
                 if physical_connected
                 else
                 "Provider layer is ready, but no physical "
@@ -221,6 +221,19 @@ class NEOBodyProvider:
         )
 
     # --------------------------------------------------------
+    # URL helper
+    # --------------------------------------------------------
+
+    @staticmethod
+    def _is_url(value: str) -> bool:
+        value = value.lower()
+
+        return (
+            value.startswith("http://")
+            or value.startswith("https://")
+        )
+
+    # --------------------------------------------------------
     # Validate job
     # --------------------------------------------------------
 
@@ -231,35 +244,57 @@ class NEOBodyProvider:
 
         errors = []
 
-        image_path = Path(
+        source_is_url = self._is_url(
             job.source_image
         )
 
-        audio_path = Path(
+        audio_is_url = self._is_url(
             job.audio_path
         )
 
-        if not image_path.exists():
+        image_exists = (
+            True
+            if source_is_url
+            else Path(job.source_image).exists()
+        )
+
+        audio_exists = (
+            True
+            if audio_is_url
+            else Path(job.audio_path).exists()
+        )
+
+        if not image_exists:
             errors.append(
-                f"Source image not found: {image_path}"
+                "Source image not found: "
+                + job.source_image
             )
 
-        if not audio_path.exists():
+        if not audio_exists:
             errors.append(
-                f"Audio file not found: {audio_path}"
+                "Audio file not found: "
+                + job.audio_path
             )
 
         return {
             "success": len(errors) == 0,
             "errors": errors,
+
             "source_image_exists":
-                image_path.exists(),
+                image_exists,
+
             "audio_exists":
-                audio_path.exists(),
+                audio_exists,
+
+            "source_image_is_url":
+                source_is_url,
+
+            "audio_is_url":
+                audio_is_url,
         }
 
     # --------------------------------------------------------
-    # Prepare provider request
+    # Prepare worker payload
     # --------------------------------------------------------
 
     def prepare_request(
@@ -271,17 +306,47 @@ class NEOBodyProvider:
             job
         )
 
+        worker_input = {
+            "source_image":
+                job.source_image,
+
+            "audio_path":
+                job.audio_path,
+
+            "motion_style":
+                job.motion_style,
+
+            "emotion":
+                job.emotion,
+
+            "fps":
+                job.fps,
+
+            "width":
+                job.width,
+
+            "height":
+                job.height,
+
+            "job_id":
+                job.job_id,
+        }
+
         return {
             "success":
                 validation["success"],
 
-            "job": asdict(job),
+            "job":
+                asdict(job),
 
             "provider":
                 self.config.provider,
 
             "validation":
                 validation,
+
+            "input":
+                worker_input,
 
             "body_generation": {
                 "upper_body": True,
@@ -322,6 +387,7 @@ class NEOBodyProvider:
 
             return {
                 "success": False,
+
                 "status":
                     "physical-model-not-connected",
 
@@ -332,9 +398,8 @@ class NEOBodyProvider:
                     "disabled",
 
                 "message": (
-                    "NEO physical body provider is ready, "
-                    "but no real body-generation model is "
-                    "connected yet."
+                    "NEO physical body provider "
+                    "is not connected."
                 ),
             }
 
@@ -373,7 +438,6 @@ class NEOBodyProvider:
                 "success": False,
                 "status":
                     "local-model-not-configured",
-
                 "job_id":
                     job.job_id,
             }
@@ -386,6 +450,7 @@ class NEOBodyProvider:
 
             return {
                 "success": False,
+
                 "status":
                     "local-model-not-found",
 
@@ -396,12 +461,11 @@ class NEOBodyProvider:
                     str(model_path),
             }
 
-        # Real local GPU inference will be connected here.
-
         return {
             "success": False,
+
             "status":
-                "local-provider-ready-for-model",
+                "local-gpu-not-enabled",
 
             "job_id":
                 job.job_id,
@@ -410,11 +474,36 @@ class NEOBodyProvider:
                 str(model_path),
 
             "message": (
-                "Local provider is configured. "
-                "Actual physical-body inference "
-                "will be connected next."
+                "EchoMimic V2 model files exist locally, "
+                "but NEO V2 heavy inference is configured "
+                "to run on the remote GPU worker."
             ),
         }
+
+    # --------------------------------------------------------
+    # RunPod endpoint normalizer
+    # --------------------------------------------------------
+
+    def _remote_url(
+        self,
+    ) -> str:
+
+        endpoint = (
+            self.config.endpoint or ""
+        ).strip()
+
+        if endpoint.startswith(
+            "http://"
+        ) or endpoint.startswith(
+            "https://"
+        ):
+            return endpoint.rstrip("/")
+
+        return (
+            "https://api.runpod.ai/v2/"
+            + endpoint
+            + "/runsync"
+        )
 
     # --------------------------------------------------------
     # Remote provider
@@ -430,6 +519,7 @@ class NEOBodyProvider:
 
             return {
                 "success": False,
+
                 "status":
                     "remote-endpoint-not-configured",
 
@@ -437,32 +527,214 @@ class NEOBodyProvider:
                     job.job_id,
             }
 
-        # IMPORTANT:
-        # We intentionally do not make the HTTP request yet.
-        #
-        # The next stage will connect this to our
-        # GPU worker / body-generation service.
+        url = self._remote_url()
+
+        payload = {
+            "input":
+                request["input"]
+        }
+
+        headers = {
+            "Content-Type":
+                "application/json",
+        }
+
+        if self.config.api_key:
+            headers["Authorization"] = (
+                "Bearer "
+                + self.config.api_key
+            )
+
+        encoded = json.dumps(
+            payload
+        ).encode("utf-8")
+
+        http_request = urllib.request.Request(
+            url=url,
+            data=encoded,
+            headers=headers,
+            method="POST",
+        )
+
+        started_at = time.time()
+
+        try:
+
+            with urllib.request.urlopen(
+                http_request,
+                timeout=self.config.timeout_seconds,
+            ) as response:
+
+                raw = response.read().decode(
+                    "utf-8"
+                )
+
+                response_data = (
+                    json.loads(raw)
+                    if raw
+                    else {}
+                )
+
+        except urllib.error.HTTPError as exc:
+
+            try:
+                error_body = (
+                    exc.read()
+                    .decode(
+                        "utf-8",
+                        errors="replace",
+                    )
+                )
+            except Exception:
+                error_body = ""
+
+            return {
+                "success": False,
+
+                "status":
+                    "remote-http-error",
+
+                "job_id":
+                    job.job_id,
+
+                "http_status":
+                    exc.code,
+
+                "error":
+                    str(exc),
+
+                "response":
+                    error_body,
+            }
+
+        except urllib.error.URLError as exc:
+
+            return {
+                "success": False,
+
+                "status":
+                    "remote-connection-error",
+
+                "job_id":
+                    job.job_id,
+
+                "error":
+                    str(exc),
+            }
+
+        except TimeoutError:
+
+            return {
+                "success": False,
+
+                "status":
+                    "remote-timeout",
+
+                "job_id":
+                    job.job_id,
+
+                "timeout_seconds":
+                    self.config.timeout_seconds,
+            }
+
+        except Exception as exc:
+
+            return {
+                "success": False,
+
+                "status":
+                    "remote-request-failed",
+
+                "job_id":
+                    job.job_id,
+
+                "error":
+                    str(exc),
+            }
+
+        elapsed = round(
+            time.time() - started_at,
+            2,
+        )
+
+        runpod_status = (
+            response_data.get("status")
+            if isinstance(
+                response_data,
+                dict,
+            )
+            else None
+        )
+
+        output = (
+            response_data.get("output")
+            if isinstance(
+                response_data,
+                dict,
+            )
+            else None
+        )
+
+        worker_error = None
+
+        if isinstance(
+            output,
+            dict,
+        ):
+            worker_error = (
+                output.get("error")
+                or output.get("message")
+            )
+
+        success = (
+            runpod_status
+            in {
+                "COMPLETED",
+                "completed",
+            }
+        )
+
+        if (
+            isinstance(output, dict)
+            and output.get("success") is False
+        ):
+            success = False
 
         return {
-            "success": False,
+            "success":
+                success,
 
             "status":
-                "remote-provider-ready-for-worker",
+                (
+                    "completed"
+                    if success
+                    else
+                    (
+                        runpod_status
+                        or "remote-worker-error"
+                    )
+                ),
 
             "job_id":
                 job.job_id,
 
+            "provider":
+                "remote",
+
             "endpoint":
-                self.config.endpoint,
+                url,
 
-            "request":
-                request,
+            "elapsed_seconds":
+                elapsed,
 
-            "message": (
-                "Remote GPU provider is configured. "
-                "The actual worker request will be "
-                "implemented in the next stage."
-            ),
+            "runpod":
+                response_data,
+
+            "output":
+                output,
+
+            "error":
+                worker_error,
         }
 
     # --------------------------------------------------------
@@ -478,8 +750,8 @@ class NEOBodyProvider:
                 self.status(),
 
             "next_step": (
-                "Connect a physical upper-body/"
-                "hand-generation GPU backend."
+                "Connect RunPod worker to "
+                "EchoMimic V2 inference."
             ),
         }
 
