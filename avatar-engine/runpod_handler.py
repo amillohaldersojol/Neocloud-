@@ -69,20 +69,39 @@ def prepare_input_file(
     default_name: str,
 ) -> Path:
 
+    work_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    default_suffix = Path(default_name).suffix.lower()
+
     if is_url(value):
 
-        suffix = Path(
-            value.split("?")[0]
-        ).suffix
+        url_path = value.split("?")[0]
+        detected_suffix = Path(url_path).suffix.lower()
 
-        if not suffix:
-            suffix = Path(default_name).suffix
+        valid_suffixes = {
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".webp",
+            ".wav",
+            ".mp3",
+            ".m4a",
+            ".mp4",
+            ".aac",
+            ".flac",
+        }
+
+        if detected_suffix not in valid_suffixes:
+            detected_suffix = default_suffix
 
         destination = (
             work_dir
             / (
                 Path(default_name).stem
-                + suffix
+                + detected_suffix
             )
         )
 
@@ -90,6 +109,36 @@ def prepare_input_file(
             value,
             destination,
         )
+
+    source = Path(value)
+
+    if not source.exists():
+        raise FileNotFoundError(
+            f"Input file not found: {value}"
+        )
+
+    source_suffix = source.suffix.lower()
+
+    if source_suffix:
+        destination = (
+            work_dir
+            / (
+                Path(default_name).stem
+                + source_suffix
+            )
+        )
+    else:
+        destination = (
+            work_dir
+            / default_name
+        )
+
+    shutil.copy2(
+        source,
+        destination,
+    )
+
+    return destination
 
     source = Path(value)
 
@@ -416,8 +465,8 @@ def run_echomimic(
         "--pose_dir",
         str(pose_dir),
 
-        "--refimg_name",
-        image_file.name,
+       "--refimg_name",
+f"{ref_dir.name}/{image_file.name}",
 
         "--audio_name",
         audio_file.name,
