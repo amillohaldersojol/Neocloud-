@@ -26,8 +26,6 @@ RUN git lfs install
 
 # ============================================================
 # Python packaging tools
-# Keep setuptools available because OpenAI CLIP setup.py
-# imports pkg_resources during build.
 # ============================================================
 
 RUN python -m pip install --no-cache-dir \
@@ -62,12 +60,12 @@ RUN rm -rf /app/models/echomimic_v2 \
 WORKDIR /app/models/echomimic_v2
 
 # ============================================================
-# EchoMimic dependency install
-#
-# CLIP's old setup.py imports pkg_resources.
-# Installing setuptools first and disabling build isolation
-# prevents the temporary isolated environment from missing it.
+# EchoMimic dependency compatibility fixes
 # ============================================================
+
+RUN sed -i \
+    's/onnxruntime-gpu==1\.20\.1/onnxruntime-gpu==1.20.2/g' \
+    requirements.txt
 
 RUN python -m pip install --no-cache-dir \
     "setuptools<81" \
@@ -122,7 +120,7 @@ RUN mkdir -p ./pretrained_weights/audio_processor \
     https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ec22b9/tiny.pt
 
 # ============================================================
-# Verify critical files during build
+# Verify critical files
 # ============================================================
 
 RUN test -f ./pretrained_weights/denoising_unet.pth \
