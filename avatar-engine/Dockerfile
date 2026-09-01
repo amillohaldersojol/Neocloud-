@@ -25,14 +25,23 @@ RUN apt-get update && apt-get install -y \
 RUN git lfs install
 
 # ============================================================
+# Python packaging tools
+# Keep setuptools available because OpenAI CLIP setup.py
+# imports pkg_resources during build.
+# ============================================================
+
+RUN python -m pip install --no-cache-dir \
+    "pip<26" \
+    "setuptools<81" \
+    wheel
+
+# ============================================================
 # NeoCloud Python dependencies
 # ============================================================
 
 COPY avatar-engine/requirements.txt .
 
-RUN pip install --no-cache-dir --upgrade pip
-
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir -r requirements.txt
 
 # ============================================================
 # Copy NeoCloud Avatar Engine
@@ -53,10 +62,21 @@ RUN rm -rf /app/models/echomimic_v2 \
 WORKDIR /app/models/echomimic_v2
 
 # ============================================================
-# EchoMimic V2 Python dependencies
+# EchoMimic dependency install
+#
+# CLIP's old setup.py imports pkg_resources.
+# Installing setuptools first and disabling build isolation
+# prevents the temporary isolated environment from missing it.
 # ============================================================
 
-RUN pip install --no-cache-dir -r requirements.txt
+RUN python -m pip install --no-cache-dir \
+    "setuptools<81" \
+    wheel
+
+RUN python -m pip install \
+    --no-cache-dir \
+    --no-build-isolation \
+    -r requirements.txt
 
 # ============================================================
 # Main EchoMimic V2 checkpoints
@@ -102,7 +122,7 @@ RUN mkdir -p ./pretrained_weights/audio_processor \
     https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ec22b9/tiny.pt
 
 # ============================================================
-# Verify critical files during Docker build
+# Verify critical files during build
 # ============================================================
 
 RUN test -f ./pretrained_weights/denoising_unet.pth \
