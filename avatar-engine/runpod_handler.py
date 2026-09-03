@@ -463,7 +463,7 @@ def run_echomimic(
         str(audio_dir),
 
         "--pose_dir",
-        str(pose_dir),
+       str(pose_dir.parent),
 
        "--refimg_name",
 f"{ref_dir.name}/{image_file.name}",
