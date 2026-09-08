@@ -449,7 +449,8 @@ def run_echomimic(
 
         "--steps",
         str(steps),
-
+"-L",
+str(int(payload.get("length", 24))),
         "--fps",
         str(fps),
 
