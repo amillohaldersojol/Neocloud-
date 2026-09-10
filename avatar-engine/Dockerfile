@@ -56,7 +56,7 @@ RUN rm -rf /app/models/echomimic_v2 \
     && git clone \
        https://github.com/antgroup/echomimic_v2.git \
        /app/models/echomimic_v2
-
+COPY avatar-engine/overrides/echomimic_v2/infer.py /app/models/echomimic_v2/infer.py
 WORKDIR /app/models/echomimic_v2
 
 # ============================================================
