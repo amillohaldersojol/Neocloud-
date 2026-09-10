@@ -71,3 +71,4 @@ avatar-engine/models/SadTalker/results/
 *.ckpt
 *.safetensors
 *.onnx
+avatar-engine/models/echomimic_v2/

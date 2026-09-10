@@ -1,301 +1,229 @@
 "use client";
 
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-type Voice = {
-  id: string;
-  name: string;
-  language?: string;
-  gender?: string;
-  type?: "public" | "private";
-  previewAudioUrl?: string;
-};
-
-type State =
+type JobState =
   | "idle"
-  | "creating"
-  | "ready"
-  | "generating"
-  | "complete"
+  | "uploading"
+  | "submitting"
+  | "queued"
+  | "running"
+  | "completed"
   | "failed";
 
-const STORE = "neocloud_creator_avatar_v1_1";
-
 export default function CreatorAvatar() {
-  const [photo, setPhoto] = useState<File | null>(null);
-  const [preview, setPreview] = useState("");
-  const [name, setName] = useState("My NeoCloud Avatar");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
 
-  const [avatarId, setAvatarId] = useState("");
-  const [avatarPreview, setAvatarPreview] = useState("");
-  const [defaultVoiceId, setDefaultVoiceId] = useState("");
+  const [imagePreview, setImagePreview] = useState("");
+  const [audioName, setAudioName] = useState("");
 
-  const [script, setScript] = useState(
-    "Hello! This is my NeoCloud AI avatar."
-  );
+  const [motionStyle, setMotionStyle] = useState("natural");
+  const [emotion, setEmotion] = useState("neutral");
 
-  const [voices, setVoices] = useState<Voice[]>([]);
-  const [voiceId, setVoiceId] = useState("");
-  const [voiceScope, setVoiceScope] = useState<"private" | "public">("public");
-  const [voiceGender, setVoiceGender] = useState<"male" | "female" | "all">(
-    "male"
-  );
-  const [voiceLanguage, setVoiceLanguage] = useState("English");
-  const [voiceSpeed, setVoiceSpeed] = useState("1");
-  const [voicePitch, setVoicePitch] = useState("0");
+  const [fps, setFps] = useState(24);
+  const [steps, setSteps] = useState(4);
+  const [length, setLength] = useState(24);
 
-  const [ratio, setRatio] = useState("9:16");
-  const [resolution, setResolution] = useState("720p");
-  const [expression, setExpression] = useState("low");
-  const [motion, setMotion] = useState(
-    "Very subtle natural presenter movement. Keep the face stable, maintain natural eye contact, use minimal head movement, no exaggerated gestures."
-  );
-
-  const [consent, setConsent] = useState(false);
-  const [state, setState] = useState<State>("idle");
+  const [state, setState] = useState<JobState>("idle");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [videoId, setVideoId] = useState("");
+
+  const [jobId, setJobId] = useState("");
   const [videoUrl, setVideoUrl] = useState("");
 
-  const input = useRef<HTMLInputElement | null>(null);
-  const timer = useRef<number | null>(null);
+  const timerRef = useRef<number | null>(null);
 
-  const busy = state === "creating" || state === "generating";
-
-  useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORE) || "{}");
-
-      if (saved.avatarId) {
-        setAvatarId(saved.avatarId);
-        setName(saved.name || "My NeoCloud Avatar");
-        setAvatarPreview(saved.preview || "");
-        setDefaultVoiceId(saved.defaultVoiceId || "");
-        setVoiceId(saved.voiceId || saved.defaultVoiceId || "");
-        setState("ready");
-      }
-    } catch {}
-  }, []);
+  const busy =
+    state === "uploading" ||
+    state === "submitting" ||
+    state === "queued" ||
+    state === "running";
 
   useEffect(() => {
     return () => {
-      if (timer.current !== null) {
-        window.clearTimeout(timer.current);
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
       }
 
-      if (preview) {
-        URL.revokeObjectURL(preview);
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
       }
     };
-  }, [preview]);
+  }, [imagePreview]);
 
-  const selectedVoice = useMemo(
-    () => voices.find((voice) => voice.id === voiceId),
-    [voices, voiceId]
-  );
-
-  const choose = (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!["image/jpeg", "image/png"].includes(file.type)) {
-      setError("Use a JPG or PNG portrait.");
-      e.target.value = "";
-      return;
-    }
-
-    if (file.size > 32 * 1024 * 1024) {
-      setError("Photo must be 32 MB or smaller.");
-      e.target.value = "";
-      return;
-    }
-
-    if (preview) {
-      URL.revokeObjectURL(preview);
-    }
-
-    setPhoto(file);
-    setPreview(URL.createObjectURL(file));
-    setError("");
-  };
-
-  const loadVoices = async (
-    scope: "private" | "public" = voiceScope,
-    gender: "male" | "female" | "all" = voiceGender
+  const uploadToCloudinary = async (
+    file: File,
+    resourceType: "image" | "video"
   ) => {
-    setError("");
-    setMessage("Loading available voices...");
+    const cloudName =
+      process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
 
-    try {
-      const params = new URLSearchParams({
-        action: "voices",
-        type: scope,
-        language: voiceLanguage,
-      });
+    const uploadPreset =
+      process.env.NEXT_PUBLIC_CLOUDINARY_UPLOAD_PRESET;
 
-      if (gender !== "all") {
-        params.set("gender", gender);
-      }
-
-      const response = await fetch(`/api/creator-avatar?${params.toString()}`, {
-        cache: "no-store",
-      });
-
-      const json = await response.json();
-
-      if (!response.ok) {
-        throw new Error(json?.error || "Could not load HeyGen voices.");
-      }
-
-      const list: Voice[] = json.voices || [];
-      setVoices(list);
-
-      if (list.length > 0) {
-        setVoiceId(list[0].id);
-        setMessage(
-          scope === "private"
-            ? "Private/cloned voices loaded."
-            : "Public voices loaded."
-        );
-      } else {
-        setVoiceId("");
-        setMessage(
-          scope === "private"
-            ? "No private cloned voices were found in your HeyGen account."
-            : "No voices matched this filter."
-        );
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load voices.");
+    if (!cloudName || !uploadPreset) {
+      throw new Error(
+        "Cloudinary configuration is missing in .env.local."
+      );
     }
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("upload_preset", uploadPreset);
+
+    const response = await fetch(
+      `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    const json = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        json?.error?.message || "Cloudinary upload failed."
+      );
+    }
+
+    if (!json?.secure_url) {
+      throw new Error("Cloudinary returned no file URL.");
+    }
+
+    return json.secure_url as string;
   };
 
-  const create = async () => {
-    if (!photo || !consent || busy) return;
-
-    setState("creating");
-    setError("");
-    setMessage("Uploading portrait and creating reusable avatar...");
-
+  const pollStatus = async (id: string) => {
     try {
-      const form = new FormData();
-      form.append("photo", photo);
-      form.append("name", name);
-
       const response = await fetch(
-        "/api/creator-avatar?action=create-avatar",
+        `/api/creator-avatar?action=video-status&id=${encodeURIComponent(id)}`,
         {
-          method: "POST",
-          body: form,
+          cache: "no-store",
         }
       );
 
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error || "Avatar creation failed.");
+        throw new Error(
+          json?.error || "Could not check NEO V2 job status."
+        );
       }
 
-      if (!json.avatarId) {
-        throw new Error("HeyGen returned no avatar ID.");
+      const status = String(json?.status || "").toUpperCase();
+
+      if (status === "COMPLETED") {
+        const url =
+          json?.videoUrl ||
+          json?.output?.video_url ||
+          json?.output?.videoUrl ||
+          json?.output?.url ||
+          json?.output?.output_url ||
+          "";
+
+        if (!url) {
+          setState("failed");
+          setError(
+            "NEO V2 completed, but no public video URL was returned."
+          );
+          return;
+        }
+
+        setVideoUrl(url);
+        setState("completed");
+        setMessage("NEO V2 video is ready.");
+        return;
       }
 
-      setAvatarId(json.avatarId);
-      setAvatarPreview(json.previewImageUrl || preview);
-      setDefaultVoiceId(json.defaultVoiceId || "");
-
-      if (json.defaultVoiceId) {
-        setVoiceId(json.defaultVoiceId);
-      }
-
-      setState("ready");
-      setMessage(
-        "Avatar ready. For the best voice match, choose a private cloned voice if your account has one."
-      );
-
-      localStorage.setItem(
-        STORE,
-        JSON.stringify({
-          avatarId: json.avatarId,
-          name,
-          preview: json.previewImageUrl || "",
-          defaultVoiceId: json.defaultVoiceId || "",
-          voiceId: json.defaultVoiceId || "",
-        })
-      );
-    } catch (e) {
-      setState("failed");
-      setError(e instanceof Error ? e.message : "Avatar creation failed.");
-    }
-  };
-
-  const poll = async (id: string) => {
-    try {
-      const response = await fetch(
-        `/api/creator-avatar?action=video-status&id=${encodeURIComponent(id)}`,
-        { cache: "no-store" }
-      );
-
-      const json = await response.json();
-
-      if (!response.ok) {
-        throw new Error(json?.error || "Status check failed.");
-      }
-
-      if (json.failureMessage) {
+      if (
+        status === "FAILED" ||
+        status === "CANCELLED" ||
+        status === "TIMED_OUT"
+      ) {
         setState("failed");
-        setError(json.failureMessage);
+        setError(
+          json?.error ||
+            json?.output?.error ||
+            json?.output?.message ||
+            "NEO V2 generation failed."
+        );
         return;
       }
 
-      if (json.videoUrl) {
-        setVideoUrl(json.videoUrl);
-        setState("complete");
-        setMessage("Creator Avatar video is ready.");
-        return;
+      if (status === "IN_PROGRESS") {
+        setState("running");
+        setMessage("NEO V2 is rendering your avatar...");
+      } else {
+        setState("queued");
+        setMessage("Waiting for GPU worker...");
       }
 
-      setState("generating");
-      setMessage(
-        `Rendering more natural avatar video${
-          json.status ? ` (${json.status})` : ""
-        }...`
+      timerRef.current = window.setTimeout(
+        () => void pollStatus(id),
+        6000
       );
-
-      timer.current = window.setTimeout(() => void poll(id), 7000);
-    } catch (e) {
+    } catch (err) {
       setState("failed");
-      setError(e instanceof Error ? e.message : "Status check failed.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not check job status."
+      );
     }
   };
 
   const generate = async () => {
-    if (!avatarId || !script.trim() || busy) return;
+    if (!imageFile) {
+      setError("Choose a portrait image first.");
+      return;
+    }
 
-    setState("generating");
+    if (!audioFile) {
+      setError("Choose an audio or video file first.");
+      return;
+    }
+
+    if (busy) return;
+
     setError("");
     setVideoUrl("");
-    setMessage("Starting realistic avatar render...");
+    setJobId("");
+    setState("uploading");
+    setMessage("Uploading portrait and audio...");
 
     try {
+      const [sourceImageUrl, audioUrl] = await Promise.all([
+        uploadToCloudinary(imageFile, "image"),
+        uploadToCloudinary(audioFile, "video"),
+      ]);
+
+      setState("submitting");
+      setMessage("Sending request to NEO V2...");
+
       const response = await fetch(
         "/api/creator-avatar?action=generate-video",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+          },
           body: JSON.stringify({
-            avatarId,
-            script: script.trim(),
-            voiceId: voiceId || defaultVoiceId || undefined,
-            aspectRatio: ratio,
-            resolution,
-            expressiveness: expression,
-            motionPrompt: motion,
-            voiceSpeed: Number(voiceSpeed),
-            voicePitch: Number(voicePitch),
-            voiceLocale: voiceLanguage,
-            title: `${name} - NeoCloud Creator`,
+            source_image: sourceImageUrl,
+            audio_path: audioUrl,
+
+            motion_style: motionStyle,
+            emotion,
+
+            fps,
+            width: 768,
+            height: 768,
+
+            steps,
+            length,
+
+            timeout_seconds: 1500,
           }),
         }
       );
@@ -303,449 +231,309 @@ export default function CreatorAvatar() {
       const json = await response.json();
 
       if (!response.ok) {
-        throw new Error(json?.error || "Could not generate video.");
+        throw new Error(
+          json?.error || "Could not start NEO V2 generation."
+        );
       }
 
-      if (!json.videoId) {
-        throw new Error("HeyGen returned no video ID.");
+      const id = json?.jobId || json?.videoId || json?.id;
+
+      if (!id) {
+        throw new Error(
+          "RunPod accepted the request but returned no job ID."
+        );
       }
 
-      setVideoId(json.videoId);
-      await poll(json.videoId);
-    } catch (e) {
+      setJobId(id);
+      setState("queued");
+      setMessage("Job created. Waiting for GPU worker...");
+
+      await pollStatus(id);
+    } catch (err) {
       setState("failed");
-      setError(e instanceof Error ? e.message : "Video generation failed.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Generation failed."
+      );
     }
   };
 
   const reset = () => {
-    localStorage.removeItem(STORE);
-    setAvatarId("");
-    setAvatarPreview("");
-    setDefaultVoiceId("");
-    setVoiceId("");
-    setVoices([]);
-    setVideoId("");
-    setVideoUrl("");
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
     setState("idle");
     setMessage("");
     setError("");
+    setJobId("");
+    setVideoUrl("");
   };
 
   return (
-    <main className="min-h-screen bg-[#0d0d0d] text-white">
-      <div className="mx-auto max-w-6xl px-4 py-8 md:px-8 md:py-12">
+    <main className="min-h-screen bg-[#080b10] text-white">
+      <div className="mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12">
         <div className="mb-8">
-          <div className="mb-3 inline-flex rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-white/55">
+          <div className="mb-4 inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/5 px-4 py-1.5 text-xs text-cyan-200">
             NeoCloud Creator Studio
           </div>
 
-          <h1 className="text-3xl font-semibold md:text-5xl">
-            Creator Avatar V1.1
+          <h1 className="text-3xl font-semibold tracking-tight md:text-5xl">
+            NEO V2 Avatar Engine
           </h1>
 
-          <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50 md:text-base">
-            Improved voice control and more conservative motion settings for a
-            more natural creator-avatar result.
+          <p className="mt-4 max-w-3xl text-sm leading-6 text-white/45 md:text-base">
+            Upload a portrait and audio or video. NeoCloud will generate
+            your AI presenter automatically.
           </p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <section className="rounded-[28px] border border-white/10 bg-[#171717] p-5 md:p-7">
-            <div className="flex justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-semibold">1. Your Avatar</h2>
-                <p className="mt-1 text-sm text-white/40">
-                  Use a well-lit, front-facing portrait with a neutral
-                  expression.
-                </p>
-              </div>
-
-              {avatarId && (
-                <button
-                  type="button"
-                  onClick={reset}
-                  disabled={busy}
-                  className="rounded-full bg-white/10 px-4 py-2 text-xs"
-                >
-                  New avatar
-                </button>
-              )}
+          <section className="rounded-[28px] border border-white/10 bg-white/[0.035] p-5 md:p-7">
+            <div className="text-xs uppercase tracking-[0.2em] text-cyan-300/60">
+              Input
             </div>
 
-            {!avatarId ? (
-              <>
+            <h2 className="mt-2 text-xl font-semibold">
+              Portrait + Audio
+            </h2>
+
+            <div className="mt-6">
+              <div className="mb-2 text-sm text-white/60">
+                Portrait image
+              </div>
+
+              <label className="flex min-h-40 cursor-pointer items-center justify-center rounded-2xl border border-dashed border-white/15 bg-black/20 p-4 text-center hover:border-cyan-400/30">
                 <input
-                  ref={input}
                   type="file"
-                  accept="image/png,image/jpeg"
+                  accept="image/png,image/jpeg,image/webp"
                   className="hidden"
-                  onChange={choose}
+                  disabled={busy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
+
+                    setImageFile(file);
+
+                    if (imagePreview) {
+                      URL.revokeObjectURL(imagePreview);
+                    }
+
+                    if (file) {
+                      setImagePreview(URL.createObjectURL(file));
+                    } else {
+                      setImagePreview("");
+                    }
+                  }}
                 />
 
-                <button
-                  type="button"
-                  onClick={() => input.current?.click()}
-                  className="mt-5 flex min-h-[330px] w-full items-center justify-center overflow-hidden rounded-[24px] border border-dashed border-white/15 bg-white/[0.025]"
-                >
-                  {preview ? (
-                    <img
-                      src={preview}
-                      alt="Portrait preview"
-                      className="h-[330px] w-full object-contain"
-                    />
-                  ) : (
-                    <div className="text-center">
-                      <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 text-3xl">
-                        +
-                      </div>
-                      <div>Choose portrait</div>
-                      <div className="mt-2 text-xs text-white/35">
-                        JPG / PNG · max 32 MB
-                      </div>
-                    </div>
-                  )}
-                </button>
-
-                <label className="mt-5 block">
-                  <span className="mb-2 block text-sm text-white/60">
-                    Avatar name
-                  </span>
-                  <input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
+                {imagePreview ? (
+                  <img
+                    src={imagePreview}
+                    alt="Portrait preview"
+                    className="max-h-72 rounded-xl object-contain"
                   />
-                </label>
-
-                <label className="mt-5 flex gap-3 rounded-2xl border border-amber-400/10 bg-amber-400/[0.04] p-4 text-xs leading-5 text-amber-100/70">
-                  <input
-                    type="checkbox"
-                    checked={consent}
-                    onChange={(e) => setConsent(e.target.checked)}
-                  />
-                  <span>
-                    I am this person or I have explicit permission to create
-                    and use this person&apos;s AI avatar.
-                  </span>
-                </label>
-
-                <button
-                  disabled={!photo || !consent || busy}
-                  onClick={create}
-                  className="mt-5 w-full rounded-2xl bg-white px-5 py-3.5 text-sm font-semibold text-black disabled:bg-white/15 disabled:text-white/30"
-                >
-                  {state === "creating"
-                    ? "Creating Avatar..."
-                    : "Create My Avatar"}
-                </button>
-              </>
-            ) : (
-              <div className="mt-5">
-                <div className="overflow-hidden rounded-[24px] border border-white/10 bg-black">
-                  {avatarPreview ? (
-                    <img
-                      src={avatarPreview}
-                      alt="Saved avatar"
-                      className="h-[330px] w-full object-contain"
-                    />
-                  ) : (
-                    <div className="flex h-[250px] items-center justify-center text-white/35">
-                      Avatar ready
+                ) : (
+                  <div>
+                    <div className="text-sm font-medium">
+                      Click to upload portrait
                     </div>
-                  )}
-                </div>
-
-                <div className="mt-4 rounded-2xl border border-emerald-400/15 bg-emerald-500/[0.06] p-4">
-                  <div className="text-sm font-medium text-emerald-200">
-                    ✓ Reusable avatar ready
+                    <div className="mt-2 text-xs text-white/35">
+                      JPG, PNG or WEBP
+                    </div>
                   </div>
-                  <div className="mt-2 break-all text-xs text-white/35">
-                    Avatar ID: {avatarId}
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-[28px] border border-white/10 bg-[#171717] p-5 md:p-7">
-            <h2 className="text-lg font-semibold">2. Voice + Video</h2>
-
-            <label className="mt-5 block">
-              <span className="mb-2 block text-sm text-white/60">Script</span>
-              <textarea
-                value={script}
-                onChange={(e) => setScript(e.target.value)}
-                rows={6}
-                maxLength={5000}
-                className="w-full resize-none rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm leading-6"
-              />
-            </label>
-
-            <div className="mt-5 rounded-2xl border border-blue-400/10 bg-blue-400/[0.04] p-4">
-              <div className="text-sm font-medium">Voice source</div>
-              <p className="mt-1 text-xs leading-5 text-white/40">
-                If you have a cloned/private voice in HeyGen, choose Private.
-                Otherwise choose a public male/female voice.
-              </p>
-
-              <div className="mt-4 grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVoiceScope("private");
-                    void loadVoices("private", voiceGender);
-                  }}
-                  className={`rounded-xl border px-3 py-2 text-xs ${
-                    voiceScope === "private"
-                      ? "border-blue-400/35 bg-blue-500/10"
-                      : "border-white/10 bg-white/[0.03]"
-                  }`}
-                >
-                  My cloned voices
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVoiceScope("public");
-                    void loadVoices("public", voiceGender);
-                  }}
-                  className={`rounded-xl border px-3 py-2 text-xs ${
-                    voiceScope === "public"
-                      ? "border-blue-400/35 bg-blue-500/10"
-                      : "border-white/10 bg-white/[0.03]"
-                  }`}
-                >
-                  Public voices
-                </button>
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVoiceGender("male");
-                    void loadVoices(voiceScope, "male");
-                  }}
-                  className={`rounded-xl border px-3 py-2 text-xs ${
-                    voiceGender === "male"
-                      ? "border-white/25 bg-white/10"
-                      : "border-white/10"
-                  }`}
-                >
-                  Male
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVoiceGender("female");
-                    void loadVoices(voiceScope, "female");
-                  }}
-                  className={`rounded-xl border px-3 py-2 text-xs ${
-                    voiceGender === "female"
-                      ? "border-white/25 bg-white/10"
-                      : "border-white/10"
-                  }`}
-                >
-                  Female
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVoiceGender("all");
-                    void loadVoices(voiceScope, "all");
-                  }}
-                  className={`rounded-xl border px-3 py-2 text-xs ${
-                    voiceGender === "all"
-                      ? "border-white/25 bg-white/10"
-                      : "border-white/10"
-                  }`}
-                >
-                  All
-                </button>
-              </div>
+                )}
+              </label>
             </div>
-
-            <label className="mt-5 block">
-              <span className="mb-2 block text-sm text-white/60">
-                Voice language
-              </span>
-              <select
-                value={voiceLanguage}
-                onChange={(e) => setVoiceLanguage(e.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
-              >
-                <option>English</option>
-                <option>Bengali</option>
-                <option>Hindi</option>
-                <option>Spanish</option>
-                <option>Arabic</option>
-              </select>
-            </label>
 
             <div className="mt-5">
-              <div className="mb-2 flex justify-between">
-                <span className="text-sm text-white/60">Selected voice</span>
-                <button
-                  type="button"
-                  onClick={() => void loadVoices()}
-                  className="text-xs text-blue-300"
-                >
-                  Refresh voices
-                </button>
+              <div className="mb-2 text-sm text-white/60">
+                Audio or video
               </div>
 
-              <select
-                value={voiceId}
-                onChange={(e) => setVoiceId(e.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
-              >
-                <option value="">
-                  {defaultVoiceId
-                    ? "Use avatar default voice"
-                    : "Choose a voice"}
-                </option>
+              <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-white/15 bg-black/20 px-4 py-5 hover:border-cyan-400/30">
+                <input
+                  type="file"
+                  accept="audio/*,video/*"
+                  className="hidden"
+                  disabled={busy}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0] || null;
 
-                {voices.map((voice) => (
-                  <option key={voice.id} value={voice.id}>
-                    {voice.name}
-                    {voice.gender ? ` · ${voice.gender}` : ""}
-                    {voice.language ? ` · ${voice.language}` : ""}
-                  </option>
-                ))}
-              </select>
-
-              {selectedVoice?.previewAudioUrl && (
-                <audio
-                  key={selectedVoice.previewAudioUrl}
-                  src={selectedVoice.previewAudioUrl}
-                  controls
-                  className="mt-3 w-full"
+                    setAudioFile(file);
+                    setAudioName(file?.name || "");
+                  }}
                 />
-              )}
-            </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <label>
-                <span className="mb-2 block text-sm text-white/60">
-                  Voice speed
-                </span>
-                <select
-                  value={voiceSpeed}
-                  onChange={(e) => setVoiceSpeed(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
-                >
-                  <option value="0.9">0.9× Natural slow</option>
-                  <option value="1">1.0× Normal</option>
-                  <option value="1.05">1.05× Slightly faster</option>
-                </select>
-              </label>
+                <div>
+                  <div className="text-sm font-medium">
+                    {audioName || "Click to upload audio / video"}
+                  </div>
 
-              <label>
-                <span className="mb-2 block text-sm text-white/60">
-                  Voice pitch
-                </span>
-                <select
-                  value={voicePitch}
-                  onChange={(e) => setVoicePitch(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
-                >
-                  <option value="-2">Lower</option>
-                  <option value="0">Normal</option>
-                  <option value="2">Higher</option>
-                </select>
+                  <div className="mt-1 text-xs text-white/35">
+                    MP3, WAV, M4A, MP4 and similar formats
+                  </div>
+                </div>
               </label>
             </div>
 
-            <div className="mt-5 grid grid-cols-2 gap-3">
+            <div className="mt-6 grid grid-cols-2 gap-3">
               <label>
                 <span className="mb-2 block text-sm text-white/60">
-                  Aspect ratio
+                  Motion style
                 </span>
+
                 <select
-                  value={ratio}
-                  onChange={(e) => setRatio(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
+                  value={motionStyle}
+                  onChange={(e) => setMotionStyle(e.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-2xl border border-white/10 bg-[#131820] px-4 py-3 text-sm"
                 >
-                  <option value="9:16">9:16 · Reels</option>
-                  <option value="16:9">16:9 · YouTube</option>
+                  <option value="natural">Natural</option>
+                  <option value="subtle">Subtle</option>
+                  <option value="presenter">Presenter</option>
                 </select>
               </label>
 
               <label>
                 <span className="mb-2 block text-sm text-white/60">
-                  Resolution
+                  Emotion
                 </span>
+
                 <select
-                  value={resolution}
-                  onChange={(e) => setResolution(e.target.value)}
-                  className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
+                  value={emotion}
+                  onChange={(e) => setEmotion(e.target.value)}
+                  disabled={busy}
+                  className="w-full rounded-2xl border border-white/10 bg-[#131820] px-4 py-3 text-sm"
                 >
-                  <option value="720p">720p · MVP</option>
-                  <option value="1080p">1080p</option>
+                  <option value="neutral">Neutral</option>
+                  <option value="happy">Happy</option>
+                  <option value="serious">Serious</option>
                 </select>
               </label>
             </div>
+          </section>
 
-            <label className="mt-5 block">
-              <span className="mb-2 block text-sm text-white/60">
-                Expressiveness
-              </span>
-              <select
-                value={expression}
-                onChange={(e) => setExpression(e.target.value)}
-                className="w-full rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm"
+          <section className="rounded-[28px] border border-white/10 bg-white/[0.035] p-5 md:p-7">
+            <div className="text-xs uppercase tracking-[0.2em] text-cyan-300/60">
+              Generation
+            </div>
+
+            <h2 className="mt-2 text-xl font-semibold">
+              Quality Controls
+            </h2>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-3">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setSteps(4);
+                  setLength(24);
+                }}
+                className="rounded-2xl border border-cyan-400/20 bg-cyan-400/[0.05] p-4 text-left"
               >
-                <option value="low">Low · most stable</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-              </select>
-            </label>
+                <div className="text-sm font-medium">Fast Test</div>
+                <div className="mt-1 text-xs text-white/35">
+                  24 frames · 4 steps
+                </div>
+              </button>
 
-            <label className="mt-5 block">
-              <span className="mb-2 block text-sm text-white/60">
-                Motion direction
-              </span>
-              <textarea
-                value={motion}
-                onChange={(e) => setMotion(e.target.value)}
-                rows={4}
-                className="w-full resize-none rounded-2xl border border-white/10 bg-[#242424] px-4 py-3 text-sm leading-6"
-              />
-            </label>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setSteps(12);
+                  setLength(48);
+                }}
+                className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-left"
+              >
+                <div className="text-sm font-medium">Balanced</div>
+                <div className="mt-1 text-xs text-white/35">
+                  48 frames · 12 steps
+                </div>
+              </button>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setSteps(18);
+                  setLength(72);
+                }}
+                className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-left"
+              >
+                <div className="text-sm font-medium">Quality Demo</div>
+                <div className="mt-1 text-xs text-white/35">
+                  72 frames · 18 steps
+                </div>
+              </button>
+            </div>
+
+            <div className="mt-6 rounded-2xl border border-white/10 bg-black/20 p-4">
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div>
+                  <div className="text-xl font-semibold">{fps}</div>
+                  <div className="mt-1 text-xs text-white/35">FPS</div>
+                </div>
+
+                <div>
+                  <div className="text-xl font-semibold">{steps}</div>
+                  <div className="mt-1 text-xs text-white/35">Steps</div>
+                </div>
+
+                <div>
+                  <div className="text-xl font-semibold">{length}</div>
+                  <div className="mt-1 text-xs text-white/35">Frames</div>
+                </div>
+              </div>
+            </div>
+
+            <select
+              value={fps}
+              onChange={(e) => setFps(Number(e.target.value))}
+              disabled={busy}
+              className="mt-6 w-full rounded-2xl border border-white/10 bg-[#131820] px-4 py-3 text-sm"
+            >
+              <option value={24}>24 FPS</option>
+              <option value={25}>25 FPS</option>
+            </select>
 
             <button
-              disabled={!avatarId || !script.trim() || busy}
+              type="button"
               onClick={generate}
-              className="mt-5 w-full rounded-2xl bg-white px-5 py-3.5 text-sm font-semibold text-black disabled:bg-white/15 disabled:text-white/30"
+              disabled={busy || !imageFile || !audioFile}
+              className="mt-6 w-full rounded-2xl bg-white px-5 py-4 text-sm font-semibold text-black disabled:bg-white/10 disabled:text-white/25"
             >
-              {state === "generating"
+              {state === "uploading"
+                ? "Uploading files..."
+                : state === "submitting"
+                ? "Starting NEO V2..."
+                : state === "queued"
+                ? "Waiting for GPU..."
+                : state === "running"
                 ? "Generating Video..."
-                : "Generate More Natural Video"}
+                : "Generate with NEO V2"}
             </button>
           </section>
         </div>
 
-        {(message || error || videoUrl) && (
-          <section className="mt-6 rounded-[28px] border border-white/10 bg-[#171717] p-5 md:p-7">
-            {message && <p className="text-sm text-white/45">{message}</p>}
-
-            {videoId && (
-              <p className="mt-2 break-all text-xs text-white/25">
-                Video ID: {videoId}
-              </p>
+        {(message || error || jobId || videoUrl) && (
+          <section className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.035] p-5 md:p-7">
+            {message && (
+              <p className="text-sm text-white/60">{message}</p>
             )}
 
-            {error && (
-              <div className="mt-4 rounded-2xl border border-red-400/15 bg-red-500/[0.06] p-4 text-sm text-red-200/80">
-                {error}
+            {jobId && (
+              <div className="mt-4 break-all text-xs text-white/30">
+                Job ID: {jobId}
               </div>
             )}
 
-            {busy && (
-              <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-white/5">
-                <div className="h-full w-1/2 animate-pulse rounded-full bg-blue-400/70" />
+            {error && (
+              <div className="mt-5 rounded-2xl border border-red-400/15 bg-red-500/[0.06] p-4 text-sm text-red-200">
+                {error}
               </div>
             )}
 
@@ -754,8 +542,10 @@ export default function CreatorAvatar() {
                 <video
                   src={videoUrl}
                   controls
-                  className="mx-auto max-h-[720px] w-full rounded-2xl bg-black object-contain"
+                  playsInline
+                  className="w-full rounded-2xl"
                 />
+
                 <a
                   href={videoUrl}
                   target="_blank"
@@ -765,6 +555,16 @@ export default function CreatorAvatar() {
                   Open generated video
                 </a>
               </div>
+            )}
+
+            {(state === "completed" || state === "failed") && (
+              <button
+                type="button"
+                onClick={reset}
+                className="mt-5 rounded-full border border-white/10 px-4 py-2 text-xs text-white/60"
+              >
+                New generation
+              </button>
             )}
           </section>
         )}

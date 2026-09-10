@@ -1,0 +1,24 @@
+{
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/.venv/**": true,
+    "**/venv/**": true,
+    "**/avatar-engine/models/echomimic_v2/pretrained_weights/**": true,
+    "**/avatar-engine/models/echomimic_v2/pretrained_weights_official/**": true,
+    "**/avatar-engine/models/echomimic_v2/.venv/**": true,
+    "**/avatar-engine/temp/**": true,
+    "**/avatar-engine/output/**": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.next": true,
+    "**/.venv": true,
+    "**/venv": true,
+    "**/avatar-engine/models/echomimic_v2/pretrained_weights": true,
+    "**/avatar-engine/models/echomimic_v2/pretrained_weights_official": true,
+    "**/avatar-engine/models/echomimic_v2/.venv": true,
+    "**/avatar-engine/temp": true,
+    "**/avatar-engine/output": true
+  }
+}
